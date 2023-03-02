@@ -15,48 +15,8 @@ from kernels import DotProduct, Exponentiation, RBF_1
 import sys
 sys.path.append('C:/Users/cvcla/my_py_projects/toy_game')
 from wrapper import BasicWrapper
-from plot_g import intervention, set_outcome
 
 
-
-
-
-
-'''
-sys.path.append('C:/Users/cvcla/my_py_projects/ModelFree/PPO_2')
-from model import Actor, Critic
-from ppo import PPO
-from constants import get_args
-args = get_args()
-# dump the args
-#log(args)
-
-env = BasicWrapper()
-n_input = env.observation_size
-n_output = env.action_size
-
-actor = Actor(n_input, n_output, args.n_hidden)
-critic = Critic(n_input, args.n_hidden)
-ppo_agent = PPO(env, args, actor, critic)
-
-patients, S = env.reset() # S tensor
-A = env.sample_random_action()
-S_prime, R, pat, s_LogReg, r_LogReg, Xa_pre, Xa_post, outcome, is_done = env.step(A, S.detach().numpy())
-
-patients = patients[:,1:3]
-start_state = S
-Xa_initial = patients[:, 1]
-Xs_initial = patients[:, 0]
-
-# The training data ithe states (rho). initialized as beta distr
-rho_init = np.random.beta(7, 3, size=n_input)
-
-# The target is all 0's
-target = torch.zeros(n_input).float()
-Xa_post = intervention(Xa_initial, rho_init, which=2)
-kernel_ = Exponentiation(DotProduct(), exponent=1) 
-
-'''
 
 class Derivate(object):
     """
