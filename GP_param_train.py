@@ -18,6 +18,7 @@ from sklearn.base import clone
 from scipy.optimize import minimize
 from sklearn.gaussian_process.kernels import (RationalQuadratic,Exponentiation)
 from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel
+from utils import is_pos_def
 
 class GaussianProcessClassifierLaplace(object):
     '''
@@ -305,8 +306,8 @@ class GaussianProcessClassifierLaplace(object):
             W_sr_K = W_sr * K
             #W_sr_K = W_sr[:, np.newaxis] * K
 
-            B = np.eye(W.shape[0]) + W_sr_K * W_sr
-            L = cholesky(B, lower=True)
+            self.B = np.eye(W.shape[0]) + W_sr_K * W_sr
+            L = cholesky(self.B, lower=True)
             # Line 6
             b = W * f + (self.y_train_ - pi)
             # Line 7
@@ -344,14 +345,12 @@ class GaussianProcessClassifierLaplace(object):
             opt_res = minimize(
                 obj_func, initial_theta, method="L-BFGS-B", jac=True, bounds=bounds
             )
-            print("opt_res",opt_res.status)
             _check_optimize_result("lbfgs", opt_res)
             theta_opt, func_min = opt_res.x, opt_res.fun
         elif callable(self.optimizer):
             theta_opt, func_min = self.optimizer(obj_func, initial_theta, bounds=bounds)
         else:
             raise ValueError("Unknown optimizer %s." % self.optimizer)
-        print("theta_opt fun_min", theta_opt) 
         return theta_opt, func_min
     
     def post_parameters(self, X):
