@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import erf, expit as sigmoid
 import pandas as pd
+from scipy.linalg import issymmetric
 from sklearn.gaussian_process.kernels import PairwiseKernel, RBF, ConstantKernel as C
 from scipy.special import erf, expit
 from scipy.linalg import cholesky, cho_solve, solve
@@ -18,7 +19,7 @@ from sklearn.base import clone
 from scipy.optimize import minimize
 from sklearn.gaussian_process.kernels import (RationalQuadratic,Exponentiation)
 from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel
-from utils import is_pos_def
+from utilis import is_pos_def, nearestPD
 
 class GaussianProcessClassifierLaplace(object):
     '''
@@ -94,7 +95,7 @@ class GaussianProcessClassifierLaplace(object):
         *,
         optimizer="fmin_l_bfgs_b",
         n_restarts_optimizer=0,
-        max_iter_predict=200, #100
+        max_iter_predict=10, #100
         warm_start=False,
         copy_X_train=True
     ):
@@ -305,9 +306,10 @@ class GaussianProcessClassifierLaplace(object):
             W_sr = np.sqrt(W)
             W_sr_K = W_sr * K
             #W_sr_K = W_sr[:, np.newaxis] * K
-
-            self.B = np.eye(W.shape[0]) + W_sr_K * W_sr
-            L = cholesky(self.B, lower=True)
+            B = np.eye(W.shape[0]) + W_sr_K * W_sr
+            tweakB = nearestPD(B)
+            L = cholesky(tweakB, lower=True)
+     
             # Line 6
             b = W * f + (self.y_train_ - pi)
             # Line 7
@@ -402,8 +404,8 @@ class GaussianProcessClassifierLaplace(object):
 
     def fit_Xa(self):
         
-        newXA_bounds = np.array([-4, 4])
-        newXA_bounds = np.hstack(newXA_bounds, newXA_bounds)
+        newXA_bounds = np.array(([-4,4], [-4,4]))
+        
 
         
         def obj_func(newXA):
@@ -591,7 +593,7 @@ class GaussianProcessClassifierLaplace(object):
         values = np.zeros_like(self.y_train_.reshape(-1,1))
         
         i = 0
-        for i in range(20):
+        for i in range(5):
             trial = np.random.uniform(-4, 4,200)
             #values = np.column_stack((values, trial))
             b = self.FOC_i(trial.reshape(-1, 1)).squeeze()
