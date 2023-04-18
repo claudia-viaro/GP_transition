@@ -15,7 +15,6 @@ from sklearn.gaussian_process.kernels import PairwiseKernel, RBF, ConstantKernel
 from scipy.special import erf, expit
 from scipy.linalg import cholesky, cho_solve, solve
 from sklearn.metrics.pairwise import polynomial_kernel
-from sklearn.utils.multiclass import unique_labels
 from sklearn.base import clone 
 from scipy.optimize import minimize
 from sklearn.gaussian_process.kernels import (RationalQuadratic,Exponentiation)
@@ -132,7 +131,6 @@ class GaussianProcessClassifierLaplace(object):
 
         self.X_train_ = np.copy(X) if self.copy_X_train else X
         self.y_train_ = y
-        self.classes_ = unique_labels(y)
         # Encode class labels and check that it is a binary classification
         # problem
         
@@ -190,7 +188,7 @@ class GaussianProcessClassifierLaplace(object):
 
     def f_x_i(self, Xtest):
         # Xtest is a single instance of the vector newXa
-        num, var, _ = self.post_parameters(Xtest)
+        num, var = self.post_parameters(Xtest)
     
         den = np.sqrt(1+ np.pi * var / 8)
         
@@ -393,15 +391,12 @@ class GaussianProcessClassifierLaplace(object):
                 "Setting those variances to 0."
             )
             post_var[y_var_negative] = 0.0
-        # predict labels
-        predicted = np.where(post_mean > 0, self.classes_[1], self.classes_[0])
-        a_tuple = [post_mean, post_var, predicted]
-
         
+        a_tuple = [post_mean, post_var]
         return a_tuple
     
     def f_x (self, Xtest):
-        num, var, _ = self.post_parameters(Xtest)
+        num, var = self.post_parameters(Xtest)
     
         den = np.sqrt(1+ np.pi * var / 8)
         
@@ -645,7 +640,9 @@ def _check_optimize_result(solver, result, max_iter=None, extra_warning_msg=None
             warning_msg = (
                 "{} failed to converge (status={}):\n{}.\n\n"
                 "Increase the number of iterations (max_iter) "
-                "or scale the data"
+                "or scale the data as shown in:\n"
+                "    https://scikit-learn.org/stable/modules/"
+                "preprocessing.html"
             ).format(solver, result.status, result_message)
             if extra_warning_msg is not None:
                 warning_msg += "\n" + extra_warning_msg

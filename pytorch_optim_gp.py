@@ -226,14 +226,16 @@ def covar_dist(
             dist_func = sq_dist if square_dist else dist
             return dist_func(x1, x2, x1_eq_x2)
         
-      
+
+    # 
+    #       
 # instantiate model
-m = Model(kernel)
-m.fitGP(Xa_prime, outcome)
-print("lengthscale", m.lengthscale)
-print("K", m.post_parameters())
+#m = Model(kernel)
+#m.fitGP(Xa_prime, outcome)
+#print("lengthscale", m.lengthscale)
+#print("K", m.post_parameters())
 # Instantiate optimizer
-opt = torch.optim.Adam(m.parameters(), lr=0.001)
+#opt = torch.optim.Adam(m.parameters(), lr=0.001)
 
 '''
 losses = training_loop(m, opt)
@@ -249,3 +251,28 @@ GPc.fit(Xa_prime.reshape(-1,1), outcome.reshape(-1,1))
 weights = torch.distributions.Uniform(0, 0.1).sample((200,1))
 print(weights.shape)
 '''
+
+from gpytorch.models import AbstractVariationalGP
+from gpytorch.variational import CholeskyVariationalDistribution
+from gpytorch.variational import VariationalStrategy
+
+
+class GPClassificationModel(AbstractVariationalGP):
+    def __init__(self, train_x):
+        variational_distribution = CholeskyVariationalDistribution(train_x.size(0))
+        variational_strategy = VariationalStrategy(self, train_x, variational_distribution)
+        super(GPClassificationModel, self).__init__(variational_strategy)
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        latent_pred = gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        return latent_pred
+
+
+# Initialize model and likelihood
+print(torch.from_numpy(Xa_prime).size(0))
+model = GPClassificationModel(torch.from_numpy(Xa_prime))
+likelihood = gpytorch.likelihoods.BernoulliLikelihood()
