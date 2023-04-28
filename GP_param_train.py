@@ -14,6 +14,7 @@ from scipy.linalg import issymmetric
 from sklearn.gaussian_process.kernels import PairwiseKernel, RBF, ConstantKernel as C
 from scipy.special import erf, expit
 from scipy.linalg import cholesky, cho_solve, solve
+import time
 from sklearn.metrics.pairwise import polynomial_kernel
 from sklearn.utils.multiclass import unique_labels
 from sklearn.base import clone 
@@ -299,16 +300,20 @@ class GaussianProcessClassifierLaplace(object):
         ):
             f = self.f_cached
         else:
-            f = np.zeros_like(self.y_train_, dtype=np.float64).reshape(-1, 1)
+            #f = np.zeros((200,1))
+            f = np.zeros_like(self.y_train_, dtype=np.float64) #.reshape(-1, 1)
         # Use Newton's iteration method to find mode of Laplace approximation
         log_marginal_likelihood = -np.inf
-        for _ in range(self.max_iter_predict):
+        #for _ in range(2):
+        for i in range(self.max_iter_predict):
+            print("i", i)
             # Line 4
             pi = expit(f)
             W = pi * (1 - pi)
             # Line 5
             W_sr = np.sqrt(W)
             W_sr_K = W_sr * K
+            
             #W_sr_K = W_sr[:, np.newaxis] * K
             B = np.eye(W.shape[0]) + W_sr_K * W_sr
             tweakB = nearestPD(B)
@@ -322,26 +327,35 @@ class GaussianProcessClassifierLaplace(object):
             a = b - W_sr * cho_solve((L, True), W_sr_K.dot(b))
             # Line 8
             f = K.dot(a)
+            
+    
             # Line 10: Compute log marginal likelihood in loop and use as
             #          convergence criterion
+            #print("np.log(np.diag(L)).sum()", np.log(np.diag(L)).sum().sum(), np.log1p(np.exp(-(self.y_train_ * 2 - 1) * f)).sum(), a.T.dot(f))
             lml = (
                 -0.5 * a.T.dot(f)
                 - np.log1p(np.exp(-(self.y_train_ * 2 - 1) * f)).sum()
                 - np.log(np.diag(L)).sum()
             )
+            print("lml", lml)
+            
             # Check if we have converged (log marginal likelihood does
             # not decrease)
             # XXX: more complex convergence criterion
             if lml - log_marginal_likelihood < 1e-10:
+                print("diff", lml - log_marginal_likelihood)
                 break
             log_marginal_likelihood = lml
-
+            print("log_marginal_likelihood", log_marginal_likelihood)
+            time.sleep(10)
+            
         self.f_cached = f  # Remember solution for later warm-starts
         self.pi = pi
         self.L = L
         self.f = f
         self.W_sr = W_sr
         self.a = a
+        self.b = b
         return log_marginal_likelihood, pi, W_sr, L, b, a, f
 
 
@@ -374,7 +388,8 @@ class GaussianProcessClassifierLaplace(object):
         # decisions, it is enough to compute the MAP of the posterior and
         # pass it through the link function
         
-        K_star = self.kernel_(self.X_train_, X.reshape(-1, 1))  # K_star =k(x_star)
+        #K_star = self.kernel_(self.X_train_, X.reshape(-1, 1))  # K_star =k(x_star)
+        K_star = self.kernel_(self.X_train_, X)  # K_star =k(x_star)   for 2D df
         
         post_mean = K_star.T.dot(self.y_train_ - self.pi)  # Algorithm 3.2,Line 4
 

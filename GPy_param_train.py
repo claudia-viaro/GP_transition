@@ -32,10 +32,11 @@ ppo_agent = PPO(env, args, actor, critic, MLPBase_model)
 
 patients, S = env.reset() # S tensor
 A = env.sample_random_action()
-S_prime, R, pat, s_LogReg, r_LogReg, Xa, Xa_prime, outcome, done = env.step(A, S.detach().numpy())   
-
-Xa_t = torch.from_numpy(Xa)
+S_prime, R, pat, s_LogReg, r_LogReg, Xa_prime, outcome, done = env.step(A, S.detach().numpy(), patients)   
+df = pd.DataFrame(data={'Xa': Xa_prime, 'Xs':env.Xs_.squeeze()})
+df_torch = torch.from_numpy(df.to_numpy()).float()
 Xa_prime_t = torch.from_numpy(Xa_prime)
+
 
 class GPClassificationModel(AbstractVariationalGP):
     def __init__(self, train_x):
@@ -43,7 +44,9 @@ class GPClassificationModel(AbstractVariationalGP):
         variational_strategy = VariationalStrategy(self, train_x, variational_distribution)
         super(GPClassificationModel, self).__init__(variational_strategy)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+                        gpytorch.kernels.PiecewisePolynomialKernel(q = 3))
+        #self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -53,5 +56,5 @@ class GPClassificationModel(AbstractVariationalGP):
 
 
 # Initialize model and likelihood
-model = GPClassificationModel(Xa_t)
+model = GPClassificationModel(df_torch)
 likelihood = gpytorch.likelihoods.BernoulliLikelihood()
