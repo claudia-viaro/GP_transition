@@ -1,7 +1,14 @@
 import numpy as np
 from numpy import linalg as la
+import torch
+import random
+from operator import itemgetter
 from scipy.linalg import cholesky, cho_solve, solve
 from scipy.special import erf, expit as sigmoid
+import scipy.optimize
+from sklearn.utils.optimize import _check_optimize_result
+from sklearn.utils import check_random_state
+
 
 def is_pos_def(A):
     if np.array_equal(A, A.T):
@@ -63,35 +70,144 @@ def isPD(B):
         return False    
 
 
+class Min(object):
+    def __init__(
+        self,
+        train,
+        trainy,
+        optimized_gp   
+     
+    ):
+        self.train = train
+        self.trainy = trainy
+        self.optimized_gp = optimized_gp
+        self.K_xx = self.optimized_gp.kernel(self.train)
+        self.n_restarts_optimizer = 10
+        self.optimizer="fmin_l_bfgs_b"
+        _, objects_c_opt = self.optimized_gp.posterior_mode(self.K_xx, return_temporaries=True)
+        self.pi, self.W_sr, self.L, self.b, self.a = objects_c_opt
+
+    def f_x(self, test):   
+            self.num, self.var = self.optimized_gp.post_parameters(test.reshape(1, -1))
+            den = np.sqrt(1+ np.pi * self.var / 8)            
+            value = np.divide(self.num.squeeze(), den.squeeze()) #(200,)            
+            return value
+
+    def derivate_kern(self, test):
+        opt_params = self.optimized_gp.kernel_.get_params()                
+        der1 = np.zeros_like(self.train)
+        der2 = np.zeros_like(self.train)
+        if opt_params["metric"] == "polynomial":
+            for i in range(der1.shape[0]):
+                    
+                    der1[i] = opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.train[i]
+                    der2[i] = 2*opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.train[i]
+            der11 = np.inner(((opt_params["gamma"] * np.inner(test, self.train)) **(opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der1.T)
+            der22 = np.inner(((opt_params["gamma"]*np.inner(test, self.train)) **(2*opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der2.T)
+            der_tuple = [der11, der22] # shape of each is n,self.opt_params
+
+        if opt_params["metric"] == "RBF":
+            for i in range(der1.shape[0]):
+                    
+                    der1[i] = opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.train[i]
+                    der2[i] = 2*opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.train[i]
+            der11 = np.inner(((opt_params["gamma"] * np.inner(test, self.train)) **(opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der1.T)
+            der22 = np.inner(((opt_params["gamma"]*np.inner(test, self.train)) **(2*opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der2.T)
+            der_tuple = [der11, der22] # shape of each is n,self.opt_params
+
+        return der_tuple
+    
+    def _FOC_i(self, test):
+        # computes derivative function
+        values = self.f_x(test)
+        values_for_min = np.zeros((self.train.shape[0],self.train.shape[1]))
+        for i in range(values_for_min.shape[0]):
+            sigma_x = sigmoid(self.f_x(test)[i]) # now scalar ()
+            fx = self.f_x(test)[i] 
+            der2_loglik = (self.pi * (1 - self.pi))[i]
+            W_inv = - (der2_loglik and 1 / der2_loglik or 0) 
+            sum_W_K = W_inv + self.kernel(test[i])
+            b = 1/sum_W_K
+            a =  (self.trainy[i] - self.pi[i]).reshape(-1, 1) 
+            t1 = -(np.pi /8) *self.optimized_gp.kernel(test[i])*b
+            t2 = (1/(1+(np.pi/8)*self.var[i])).reshape(-1, 1)     
+            t3 = np.sqrt(self.var[i]).reshape(-1, 1)
+            t = t1* t2*t3
+            der_fx = (a * (np.sqrt(t2)))*(t*self.derivate_kern(test)[1][i] + self.derivate_kern(test)[1][i])
+            x = sigma_x * (der_fx.squeeze() + (1-sigma_x)*fx)
+            values_for_min[i]=x
+        return values, values_for_min
+    
+    def _constrained_optimization(self, obj_func, initial_X, bounds):
+        print("self.optimizer", self.optimizer)
+        if self.optimizer == "fmin_l_bfgs_b":
+            opt_res = scipy.optimize.minimize(
+                obj_func, initial_X, method="L-BFGS-B", jac=True, bounds=bounds
+            )
+            _check_optimize_result("lbfgs", opt_res)
+            Xa_opt, func_min = opt_res.x, opt_res.fun
+        elif callable(self.optimizer):
+            Xa_opt, func_min = self.optimizer(obj_func, initial_X, bounds=bounds)
+        else:
+            raise ValueError("Unknown optimizer %s." % self.optimizer)
+
+        return Xa_opt, func_min
+    
+    def fit_min(self):
+
+        # self.kernel_ is already optimized
+        self.Xa_bounds = np.array([-4, 4])
+
+        # Choose hyperparameters based on maximizing the log-marginal
+        # likelihood (potentially starting from several initial values)
+        def J_func(test):
+            value, grad = self._FOC_i(test)
+            return -value, -grad
+        
+        optima = []
+        # Additional runs are performed from log-uniform chosen initial
+        # theta
+
+        if not np.isfinite(self.optimized_gp.kernel_.bounds).all():
+            raise ValueError(
+                "Multiple optimizer restarts (n_restarts_optimizer>0) "
+                "requires that all bounds are finite."
+            )
+        bounds = self.optimized_gp.kernel_.bounds
+        for iteration in range(self.n_restarts_optimizer):
+            Xstar_initial = np.exp(np.random.uniform(bounds[:, 0], bounds[:, 1]))
+            optima.append(
+                self._constrained_optimization(J_func, Xstar_initial, bounds)
+            )
+        # Select result from run with minimal (negative) log-marginal
+        # likelihood
+        lml_values = list(map(itemgetter(1), optima))
+        self.Xa_new = optima[np.argmin(lml_values)][0]
+        self.log_marginal_likelihood_value_ = -np.min(lml_values)
+
+        return self.Xa_new
 
 
 
 class FindMin(object):
     def __init__(
         self,
-        optimized_gp
-        
+        optimized_gp    
      
     ):
         self.optimized_gp = optimized_gp
-        
-        
-        
 
     def f_x (self, test):
             
             num, var = self.optimized_gp.post_parameters(test)
             self.var = var
-            den = np.sqrt(1+ np.pi * var / 8)
-            
-            value = np.divide(num.squeeze(), den.squeeze()) #(200,)
-            
+            den = np.sqrt(1+ np.pi * var / 8)            
+            value = np.divide(num.squeeze(), den.squeeze()) #(200,)            
             return [sigmoid(value), value]
 
 
     def derivate_kern(self, test):
-        opt_params = self.optimized_gp.kernel_.get_params()    
-            
+        opt_params = self.optimized_gp.kernel_.get_params()                
         der1 = np.zeros_like(self.Xtrain)
         der2 = np.zeros_like(self.Xtrain)
         if opt_params["metric"] == "polynomial":
@@ -102,12 +218,21 @@ class FindMin(object):
             der11 = np.inner(((opt_params["gamma"] * np.inner(test, self.Xtrain)) **(opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der1.T)
             der22 = np.inner(((opt_params["gamma"]*np.inner(test, self.Xtrain)) **(2*opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der2.T)
             der_tuple = [der11, der22] # shape of each is n,self.opt_params
-        
+
+        if opt_params["metric"] == "RBF":
+            for i in range(der1.shape[0]):
+                    
+                    der1[i] = opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.Xtrain[i]
+                    der2[i] = 2*opt_params["gamma"]*opt_params["pairwise_kernels_kwargs"]["degree"]*self.Xtrain[i]
+            der11 = np.inner(((opt_params["gamma"] * np.inner(test, self.Xtrain)) **(opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der1.T)
+            der22 = np.inner(((opt_params["gamma"]*np.inner(test, self.Xtrain)) **(2*opt_params["pairwise_kernels_kwargs"]["degree"] - 1)), der2.T)
+            der_tuple = [der11, der22] # shape of each is n,self.opt_params
 
         return der_tuple
-    def FOC_i(self, test):
+    
+    def FOC_i(self, train, test):
         # computes derivative function
-            
+        self.Xtrain = train    
         K_opt = self.optimized_gp.kernel(self.Xtrain)
         Z_c_opt, objects_c_opt = self.optimized_gp.posterior_mode(K_opt, return_temporaries=True)
         pi_c_opt, W_sr_c_opt, L_c_opt, b_c_opt, a_c_opt = objects_c_opt
@@ -117,7 +242,7 @@ class FindMin(object):
             sigma_x = self.f_x(test)[0][i] # now scalar ()
             fx = self.f_x(test)[1][i] 
             der2_loglik = (pi_c_opt * (1 - pi_c_opt))[i]
-            W_inv = - (1/der2_loglik)
+            W_inv = - (der2_loglik and 1 / der2_loglik or 0) 
             sum_W_K = W_inv + self.optimized_gp.kernel(test[i])
             b = 1/sum_W_K
             a =  (self.Ytrain[i] - pi_c_opt[i]).reshape(-1, 1) 
@@ -133,17 +258,13 @@ class FindMin(object):
     def search_Xa(self, Xtrain, Ytrain):
         self.Ytrain = Ytrain
         self.Xtrain = Xtrain    
-        values = np.zeros_like(self.Ytrain.reshape(-1,1))        
+        values = np.zeros_like(self.Ytrain.reshape(-1,1))   
         i = 0
         for i in range(5):
-            print("df input", self.Xtrain.shape)
-            trial = np.random.uniform(-4, 4, self.Xtrain.shape[0]) # always n, 1
-            
-            trial_df = np.vstack([self.Xtrain[: , :-1], trial.reshape(-1, 1)]).reshape(-1, self.Xtrain.shape[1]) # Xs, Xa_star
-            print("trial_df", trial_df.shape)
+            trial = np.random.uniform(-4, 4, self.Xtrain.shape[0]) # always n, 1            
+            trial_df =np.column_stack([self.Xtrain[: , :-1], trial.reshape(-1, 1)]) #.reshape(-1, self.Xtrain.shape[1]) # Xs, Xa_star
             #values = np.column_stack((values, trial))
-            b = self.FOC_i(trial_df).squeeze()
-            print("b", b.shape)
+            b = self.FOC_i(self.Xtrain, trial_df).squeeze()
             b_1 = b[:, -1]   
             values = np.column_stack((values,b_1))
             i += 1

@@ -44,8 +44,8 @@ ppo_agent = PPO(env, args, actor, critic, MLPBase_model)
 
 patients, S = env.reset() # S tensor
 A = env.sample_random_action()
-S_prime, R, pat, s_LogReg, r_LogReg, Xa, Xa_prime, outcome, done = env.step(A, S.detach().numpy())   
-
+output = env.multi_step(A.detach().numpy(), S, Y, patients) 
+df =np.vstack([output["patients"][0][:, 2], output["Xa_post"][0]]).reshape(-1, 2) # pat is 1, Xs, Xa
 
 
 
